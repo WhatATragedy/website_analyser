@@ -1,3 +1,6 @@
 **/top_website_data
 sample.json
 **/tld_list
+**/build
+**/__pycache__
+main.spec
