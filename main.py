@@ -77,8 +77,10 @@ for index, item in enumerate(domains_to_visit):
     chrome_options = Options()
     chrome_options.add_argument("--headless") # doesn't open the browser window
     chrome_options.add_argument("--log-level=2") # set log leve lto errors only
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage") #using this when machine doesn't have a lot of RAM
     try:
-        browser = webdriver.Chrome('./ChromeDriver/chromedriver.exe', options=chrome_options)
+        browser = webdriver.Chrome('/usr/lib/chromium-browser/chromedriver', options=chrome_options)
     except selenium.common.exceptions.WebDriverException:
         logging.debug(f'Issue with Chrome Driver for {item}... Skipping...')
         continue
