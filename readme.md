@@ -4,7 +4,6 @@ You need to make sure you install the geckodriver/firefox
 ```bash
 wget https://github.com/mozilla/geckodriver/releases/download/v0.26.0/geckodriver-v0.26.0-linux64.tar.gz
 tar -xf geckodriver-v0.26.0-linux64.tar.gz
-mv geckodriver /usr/local/bin/
 sudo mv geckodriver /usr/local/bin/
 ```
 
