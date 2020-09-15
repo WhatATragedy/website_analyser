@@ -3,24 +3,18 @@ import requests
 import zipfile
 import argparse
 import asyncio
-import csv
 from bs4 import BeautifulSoup
 import tldextract
-
+import logging
+import os
 from arsenic import get_session
 from arsenic.browsers import Firefox
 from arsenic.services import Geckodriver
-class Error(Exception):
-    """Base class for other exceptions"""
-    pass
-
-class ValueTooLargeError(Error):
-    """Raised when the input value is too large"""
-    pass
-
 class Anvertising:
     def __init__(self, adDomainLists=None, searchList=None, outputDir=None):
         print("Initialising Anvertising...")
+        self.logger = logging.getLogger('AnvertisingApp')
+        self.logger.info('creating an instance of Anvertising')
         self.adDomainFiles = adDomainLists if adDomainLists is not None else None
         #Chnage this to enable single domains
         searchFile = searchList if searchList is not None else self.getTopMillionDomains("top-1m.csv")
@@ -47,9 +41,9 @@ class Anvertising:
             r = requests.get(adBlockList)
             if r.status_code == 200 and r.content is not None:
                 advertisingDomains.extend(self.consumeAdDomainList(r.content))
+                self.logger.info("Finished Initialising AdBlock Lists...")
             else:
-                print(f"Issue Initialising {adBlockList}...")
-        print("Finished Initialising AdBlock Lists...")
+                self.logger.error('Unable to load advertising domains list..')
         return advertisingDomains
 
     def consumeAdDomainList(self, responseContent):
@@ -65,16 +59,16 @@ class Anvertising:
 
     def getTopMillionDomains(self, filename):
         #Alexa list is quite good http://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip
-        print("Collecting Top Million Alexa List...")
+        self.logger.info("Collecting Top Million Alexa List...")
         r = requests.get("http://s3-us-west-1.amazonaws.com/umbrella-static/top-1m.csv.zip")
         if r.status_code == 200:
             #cast data to io reader for zipfile functionarlity
             responseReader = io.BytesIO(r.content)
             zipfile_ob = zipfile.ZipFile(responseReader)
             zipfile_ob.extractall()
+            self.logger.info("Top Million Alexa List Collected...")
         else:
-            print("Error Updating Top 1m List...")
-        print("Top Million Alexa List Collected...")
+            self.logger.error("Error Updating Top 1m List...")
         return "top-1m.csv"
 
     def topMillionDomainGen(self, blockSize):
@@ -101,12 +95,11 @@ class Anvertising:
             yield domain
 
     def parsePageSourceForAds(self, pageSource, domain):
-        print(f"Parsing {domain}")
+        self.logger.info(f"Parsing {domain}")
         hrefs_sel = []
         results = set()
         #Make sure to install the bs4 html parser
         soup = BeautifulSoup(pageSource, 'html.parser')
-        print(pageSource)
         a_tags_with_href = soup.find_all('a', href=True)
         all_iframes = soup.find_all('iframe')
         iframe_tags = soup.find_all('iframe', src=True)
@@ -120,20 +113,19 @@ class Anvertising:
         hrefs_sel.extend([script_tag['src'] for script_tag in script_tags])
         ##Got a list of all the references on the page, now need to find the top level domains
         #use the cache file in order to stop it calling out with a HTTP request everytime
-        print(f"Got a list of Ads for {domain}...Results are {hrefs_sel}...")
+        #self.logger.debug(f"Got a list of Ads for {domain}...Results are {hrefs_sel}...")
         for full_domain in hrefs_sel:
-            print(f"{domain}: advert result {full_domain}")
+            #self.logger.debug(f"{domain}: advert result {full_domain}")
             extracted = tldextract.extract(full_domain)
             main_domain = '.'.join([extracted.subdomain, extracted.domain, extracted.suffix])
-            print(f"{domain}: main domain = {main_domain}")
+            #self.logger.debug(f"{domain}: main domain = {main_domain}")
             if main_domain != '..':
                 if main_domain[0] == '.':
                     main_domain = main_domain[1:]
-                #TODO if there is no subdomain it become .domain.com so need to fix that
-                print(f"About to Compare Links for {domain} to Ad List...")
+                #self.logger.debug(f"About to Compare Links for {domain} to Ad List...")
                 ad_domain = True if main_domain in self.adDomains else False
                 results.add((domain, main_domain, ad_domain, False))
-                print(f"Results for {domain}: {results}")
+                #self.logger.debug(f"Results for {domain}: {results}")
         with open(f"{self.outputDir}/Anvertising.csv",'a') as out:
             csv_out = csv.writer(out)
             for row in results:
@@ -143,9 +135,8 @@ class Anvertising:
         # Runs geckodriver and starts a firefox session
         firefox_browser = Firefox(**{'moz:firefoxOptions': {'args': ['-headless']}})
         domain = "https://" + domain
-        print(f"Getting Domain {domain}")
+        self.logger.info(f"Getting Domain {domain}")
         async with semaphore, get_session(Geckodriver(), firefox_browser) as session:
-            print(f"About to Parse page for {domain}...")
             await session.get(domain)
             self.parsePageSourceForAds(await session.get_page_source(), domain)
 
@@ -153,12 +144,17 @@ class Anvertising:
         with open(f"{self.outputDir}/Anvertising.csv", "w") as out:
             writer = csv.writer(out)
             writer.writerow(['Domain_Visited', 'Referenced_Domain', 'Advertising_Domain', 'Error'])
-        print("Collecting Asyncio Tasks")
+        self.logger.debug("Collecting Asyncio Tasks")
         semaphore = asyncio.Semaphore(10)
-        tasks = (asyncio.ensure_future(self.getPage(domainBlock, semaphore)) for domainBlock in self.getDomain())
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for domain in self.getDomain():
+            activeTasks = len([task for task in asyncio.all_tasks() if not task.done()])
+            if activeTasks > 10:
+                await asyncio.sleep(10)
+            self.logger.info(f"Current Completed Tasks: {len([task for task in asyncio.all_tasks() if task.done()])}")
+            asyncio.create_task(self.getPage(domain, semaphore))
 
 if __name__ == "__main__":
+    logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
     parser = argparse.ArgumentParser(prog='Anvertiser!', description="""This will scrape websites looking for advertising domains.
     This will hopefully find the biggest Advertising exchanges in the world.
     """
@@ -177,10 +173,30 @@ if __name__ == "__main__":
                         metavar="DOMAIN_FILE",
                         dest='domainFile'
                         )
-    args = parser.parse_args()
-    anvertising = Anvertising(adDomainLists=None, searchList=args.domainFile, outputDir=args.outputDir)
+    parser.add_argument(
+                        "-ad", "--AdvertisingDomainsFile",
+                        help="Manually load in advertising domain file if you have one",
+                        metavar="DOMAIN_FILE",
+                        dest='adDomainLists'
 
-    print("About to start Asyncio Loop")
+    )
+    parser.add_argument("-v", "--verbose", action = "count", default = 0, help = "Increase verbosity")
+    args = parser.parse_args()
+    try:
+        loglevel = {
+            0: logging.ERROR,
+            1: logging.WARN,
+            2: logging.INFO
+        }[args.verbose]
+    except KeyError:
+        loglevel = logging.DEBUG
+    logging.basicConfig(level=loglevel,
+                        format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+                        datefmt='%m-%d %H:%M',
+                        filename='anvertising.log',
+                        filemode='w')
+    logging.getLogger().setLevel(loglevel)
+    anvertising = Anvertising(adDomainLists=args.adDomainLists, searchList=args.domainFile, outputDir=args.outputDir)
     #Python 3.7 equivalent
     r = asyncio.run(anvertising.main(), debug=True)
     # loop = asyncio.get_event_loop()
