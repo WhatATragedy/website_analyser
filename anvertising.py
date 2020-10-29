@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 import tldextract
 import logging
 import os
+import csv
 from arsenic import get_session
 from arsenic.browsers import Firefox
 from arsenic.services import Geckodriver
@@ -145,7 +146,7 @@ class Anvertising:
             writer = csv.writer(out)
             writer.writerow(['Domain_Visited', 'Referenced_Domain', 'Advertising_Domain', 'Error'])
         self.logger.debug("Collecting Asyncio Tasks")
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(30)
         for domain in self.getDomain():
             activeTasks = len([task for task in asyncio.all_tasks() if not task.done()])
             if activeTasks > 10:
